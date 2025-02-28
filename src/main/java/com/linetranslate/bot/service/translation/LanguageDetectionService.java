@@ -59,12 +59,17 @@ public class LanguageDetectionService {
         }
 
         try {
+            // 先檢查是否包含中文字符
+            if (containsChineseCharacters(text)) {
+                return "zh";
+            }
+
             TextObject textObject = textObjectFactory.forText(text);
             String detectedLanguage = languageDetector.detect(textObject)
-                    .or(LdLocale.fromString("en"))  // 預設為英文
+                    .or(LdLocale.fromString("en"))
                     .getLanguage();
 
-            // 將所有中文變體統一處理為 "zh"
+            // 處理各種中文變體
             if (detectedLanguage.startsWith("zh")) {
                 return "zh";
             }
@@ -74,6 +79,12 @@ public class LanguageDetectionService {
             log.error("語言檢測失敗: {}", e.getMessage());
             return "unknown";
         }
+    }
+
+    // 檢測中文字符的方法
+    private boolean containsChineseCharacters(String text) {
+        return text.codePoints().anyMatch(codepoint ->
+                Character.UnicodeScript.of(codepoint) == Character.UnicodeScript.HAN);
     }
 
     /**

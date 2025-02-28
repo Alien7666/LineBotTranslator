@@ -2,6 +2,8 @@ package com.linetranslate.bot.service.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 
@@ -45,24 +47,24 @@ public class GeminiService implements AiService {
             // 建立提示
             String prompt = "請將以下文本翻譯成" + targetLanguage + "。只需返回翻譯結果，不要添加任何解釋或額外信息：\n\n" + text;
 
-            // 建立請求體 JSON
-            String requestBody = "{\n" +
-                    "  \"contents\": [\n" +
-                    "    {\n" +
-                    "      \"parts\": [\n" +
-                    "        {\n" +
-                    "          \"text\": \"" + prompt.replace("\"", "\\\"") + "\"\n" +
-                    "        }\n" +
-                    "      ]\n" +
-                    "    }\n" +
-                    "  ],\n" +
-                    "  \"generationConfig\": {\n" +
-                    "    \"temperature\": 0.2,\n" +
-                    "    \"topK\": 40,\n" +
-                    "    \"topP\": 0.95,\n" +
-                    "    \"maxOutputTokens\": 1024\n" +
-                    "  }\n" +
-                    "}";
+            // 建立請求體
+            ObjectNode requestBodyJson = objectMapper.createObjectNode();
+
+            // 添加內容部分
+            ArrayNode contentsArray = requestBodyJson.putArray("contents");
+            ObjectNode contentObject = contentsArray.addObject();
+            ArrayNode partsArray = contentObject.putArray("parts");
+            ObjectNode textPart = partsArray.addObject();
+            textPart.put("text", prompt);
+
+            // 添加生成配置
+            ObjectNode generationConfig = requestBodyJson.putObject("generationConfig");
+            generationConfig.put("temperature", 0.2);
+            generationConfig.put("topK", 40);
+            generationConfig.put("topP", 0.95);
+            generationConfig.put("maxOutputTokens", 1024);
+
+            String requestBody = objectMapper.writeValueAsString(requestBodyJson);
 
             // 建立請求
             Request request = new Request.Builder()
@@ -103,9 +105,76 @@ public class GeminiService implements AiService {
 
     @Override
     public String processImage(String prompt, String imageUrl) {
-        // 本方法將在 OCR 功能實現時更新
-        log.warn("Gemini 圖片處理功能尚未實現");
-        return "Gemini 圖片處理功能尚未實現";
+        try {
+            // 建立請求體
+            ObjectNode requestBodyJson = objectMapper.createObjectNode();
+
+            // 添加內容部分
+            ArrayNode contentsArray = requestBodyJson.putArray("contents");
+            ObjectNode contentObject = contentsArray.addObject();
+            ArrayNode partsArray = contentObject.putArray("parts");
+
+            // 添加文本提示
+            ObjectNode textPart = partsArray.addObject();
+            textPart.put("text", prompt);
+
+            // 添加圖片
+            ObjectNode imagePart = partsArray.addObject();
+            ObjectNode inlineData = imagePart.putObject("inlineData");
+
+            // 從 data:image/jpeg;base64, 格式中提取 base64 部分
+            String base64Data = imageUrl;
+            if (imageUrl.contains(";base64,")) {
+                base64Data = imageUrl.split(";base64,")[1];
+            }
+
+            inlineData.put("data", base64Data);
+            inlineData.put("mimeType", "image/jpeg");
+
+            // 添加生成配置
+            ObjectNode generationConfig = requestBodyJson.putObject("generationConfig");
+            generationConfig.put("temperature", 0.1);
+            generationConfig.put("topK", 32);
+            generationConfig.put("topP", 0.95);
+            generationConfig.put("maxOutputTokens", 1024);
+
+            String requestBody = objectMapper.writeValueAsString(requestBodyJson);
+
+            // 建立請求
+            Request request = new Request.Builder()
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent?key=" + apiKey)
+                    .post(RequestBody.create(requestBody, MediaType.parse("application/json")))
+                    .build();
+
+            // 發送請求
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    log.error("Gemini API 圖片處理請求失敗: {}", response);
+                    return "圖片處理失敗: Gemini API 請求錯誤 " + response.code();
+                }
+
+                String responseBody = response.body().string();
+                JsonNode jsonResponse = objectMapper.readTree(responseBody);
+
+                // 解析回應
+                JsonNode candidatesNode = jsonResponse.path("candidates");
+                if (candidatesNode.isArray() && candidatesNode.size() > 0) {
+                    JsonNode contentNode = candidatesNode.get(0).path("content");
+                    JsonNode partsNode = contentNode.path("parts");
+
+                    if (partsNode.isArray() && partsNode.size() > 0) {
+                        String extractedText = partsNode.get(0).path("text").asText();
+                        return extractedText.trim();
+                    }
+                }
+
+                log.error("無法從 Gemini 回應中解析圖片處理結果: {}", responseBody);
+                return "圖片處理失敗: 無法解析回應";
+            }
+        } catch (IOException e) {
+            log.error("Gemini 圖片處理失敗: {}", e.getMessage());
+            return "圖片處理失敗: " + e.getMessage();
+        }
     }
 
     @Override

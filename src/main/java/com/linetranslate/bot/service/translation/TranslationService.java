@@ -40,6 +40,10 @@ public class TranslationService {
     // 翻譯指令的正則表達式模式（語言代碼）
     private static final Pattern TRANSLATION_COMMAND_PATTERN_CODE = Pattern.compile("翻譯成([a-zA-Z\\-]+)\\s*(.*)");
 
+    // 多行翻譯指令的正則表達式模式（處理 "xxx\n翻譯成yyy" 的情況）
+    private static final Pattern MULTILINE_TRANSLATION_PATTERN_CN = Pattern.compile("(.*?)\\n翻譯成([\\u4e00-\\u9fa5]+)\\s*(.*)");
+    private static final Pattern MULTILINE_TRANSLATION_PATTERN_CODE = Pattern.compile("(.*?)\\n翻譯成([a-zA-Z\\-]+)\\s*(.*)");
+
     @Autowired
     public TranslationService(
             LanguageDetectionService languageDetectionService,
@@ -68,52 +72,130 @@ public class TranslationService {
         // 檢查用戶是否已存在，如果不存在則創建
         UserProfile userProfile = ensureUserProfileExists(userId);
 
-        // 檢查是否是特定的翻譯指令 (優先檢查中文語言名稱)
-        Matcher matcherCN = TRANSLATION_COMMAND_PATTERN_CN.matcher(text);
-        Matcher matcherCode = TRANSLATION_COMMAND_PATTERN_CODE.matcher(text);
+        // 檢查是否是多行翻譯指令格式 (例如：你好\n翻譯成日文)
+        Matcher multilineMatcherCN = MULTILINE_TRANSLATION_PATTERN_CN.matcher(text);
+        Matcher multilineMatcherCode = MULTILINE_TRANSLATION_PATTERN_CODE.matcher(text);
 
         String sourceText;
         String targetLanguage;
 
-        if (matcherCN.find()) {
-            // 使用用戶指定的中文語言名稱
-            String languageName = matcherCN.group(1);
+        // 處理多行翻譯格式
+        if (multilineMatcherCN.find()) {
+            sourceText = multilineMatcherCN.group(1).trim();
+            String languageName = multilineMatcherCN.group(2);
             targetLanguage = LanguageUtils.toLanguageCode(languageName);
-            sourceText = matcherCN.group(2).trim();
+            String additionalText = multilineMatcherCN.group(3).trim();
 
-            if (sourceText.isEmpty()) {
-                return "請在「翻譯成" + languageName + "」後面輸入要翻譯的文字。";
+            // 如果有額外文本，添加到源文本
+            if (!additionalText.isEmpty()) {
+                sourceText += " " + additionalText;
             }
 
-            log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageName, targetLanguage, sourceText);
-        } else if (matcherCode.find()) {
-            // 使用用戶指定的語言代碼
-            String languageCode = matcherCode.group(1);
+            if (sourceText.isEmpty()) {
+                return "請提供要翻譯成" + languageName + "的文字。";
+            }
+
+            log.info("多行格式翻譯，用戶指定翻譯成: {} ({}), 原文: {}", languageName, targetLanguage, sourceText);
+        }
+        else if (multilineMatcherCode.find()) {
+            sourceText = multilineMatcherCode.group(1).trim();
+            String languageCode = multilineMatcherCode.group(2);
             targetLanguage = languageCode.toLowerCase();
-            sourceText = matcherCode.group(2).trim();
+            String additionalText = multilineMatcherCode.group(3).trim();
+
+            // 如果有額外文本，添加到源文本
+            if (!additionalText.isEmpty()) {
+                sourceText += " " + additionalText;
+            }
 
             if (sourceText.isEmpty()) {
-                return "請在「翻譯成" + languageCode + "」後面輸入要翻譯的文字。";
+                return "請提供要翻譯成" + languageCode + "的文字。";
             }
 
-            log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageCode, LanguageUtils.toChineseName(targetLanguage), sourceText);
-        } else {
-            // 使用自動檢測語言並選擇目標語言
-            sourceText = text;
-            String sourceLanguage = languageDetectionService.detectLanguage(sourceText);
+            log.info("多行格式翻譯，用戶指定翻譯成: {} ({}), 原文: {}", languageCode, LanguageUtils.toChineseName(targetLanguage), sourceText);
+        }
+        // 檢查是否是單行翻譯指令格式 (例如：翻譯成日文 你好)
+        else if (text.startsWith("翻譯成")) {
+            Matcher matcherCN = TRANSLATION_COMMAND_PATTERN_CN.matcher(text);
+            Matcher matcherCode = TRANSLATION_COMMAND_PATTERN_CODE.matcher(text);
 
-            // 如果用戶有默認偏好語言，優先使用偏好語言
-            if (userProfile.getPreferredLanguage() != null && !userProfile.getPreferredLanguage().isEmpty()) {
-                targetLanguage = userProfile.getPreferredLanguage();
+            if (matcherCN.find()) {
+                // 使用用戶指定的中文語言名稱
+                String languageName = matcherCN.group(1);
+                targetLanguage = LanguageUtils.toLanguageCode(languageName);
+                sourceText = matcherCN.group(2).trim();
+
+                if (sourceText.isEmpty()) {
+                    return "請在「翻譯成" + languageName + "」後面輸入要翻譯的文字。";
+                }
+
+                log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageName, targetLanguage, sourceText);
+            } else if (matcherCode.find()) {
+                // 使用用戶指定的語言代碼
+                String languageCode = matcherCode.group(1);
+                targetLanguage = languageCode.toLowerCase();
+                sourceText = matcherCode.group(2).trim();
+
+                if (sourceText.isEmpty()) {
+                    return "請在「翻譯成" + languageCode + "」後面輸入要翻譯的文字。";
+                }
+
+                log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageCode, LanguageUtils.toChineseName(targetLanguage), sourceText);
             } else {
-                targetLanguage = ("zh".equals(sourceLanguage))
-                        ? appConfig.getDefaultTargetLanguageForChinese()
-                        : appConfig.getDefaultTargetLanguageForOthers();
+                // 如果格式不正確，使用默認翻譯處理
+                return handleDefaultTranslation(userId, text, userProfile, start);
             }
-
-            log.info("自動檢測語言: {}, 目標語言: {}", sourceLanguage, targetLanguage);
+        } else {
+            // 使用默認翻譯處理
+            return handleDefaultTranslation(userId, text, userProfile, start);
         }
 
+        // 進行實際的翻譯處理
+        return performTranslation(userId, userProfile, sourceText, targetLanguage, start);
+    }
+
+    /**
+     * 處理默認的翻譯情況（無指定目標語言）
+     */
+    private String handleDefaultTranslation(String userId, String text, UserProfile userProfile, Instant start) {
+        // 使用自動檢測語言並選擇目標語言
+        String sourceText = text;
+        String sourceLanguage = languageDetectionService.detectLanguage(sourceText);
+        String targetLanguage;
+
+        // 決定目標語言
+        if (userProfile.getPreferredLanguage() != null && !userProfile.getPreferredLanguage().isEmpty()) {
+            // 如果用戶有偏好設置，但輸入的語言與偏好語言相同，則使用默認規則
+            if (sourceLanguage.equals(userProfile.getPreferredLanguage()) ||
+                    (sourceLanguage.startsWith("zh") && userProfile.getPreferredLanguage().startsWith("zh"))) {
+                targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+            } else {
+                // 使用用戶的偏好語言
+                targetLanguage = userProfile.getPreferredLanguage();
+            }
+        } else {
+            // 如果沒有偏好，使用默認規則
+            targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+        }
+
+        log.info("自動檢測語言: {}, 目標語言: {}", sourceLanguage, targetLanguage);
+
+        return performTranslation(userId, userProfile, sourceText, targetLanguage, start);
+    }
+
+    /**
+     * 根據源語言選擇默認的目標語言
+     */
+    private String getDefaultTargetLanguage(String sourceLanguage) {
+        return ("zh".equals(sourceLanguage))
+                ? appConfig.getDefaultTargetLanguageForChinese()
+                : appConfig.getDefaultTargetLanguageForOthers();
+    }
+
+    /**
+     * 執行翻譯並處理相關記錄
+     */
+    private String performTranslation(String userId, UserProfile userProfile, String sourceText, String targetLanguage, Instant start) {
         // 選擇 AI 服務
         AiService aiService = aiServiceFactory.getService(userProfile.getPreferredAiProvider());
 
@@ -201,11 +283,15 @@ public class TranslationService {
         // 確定目標語言
         String targetLanguage;
         if (userProfile.getPreferredLanguage() != null && !userProfile.getPreferredLanguage().isEmpty()) {
-            targetLanguage = userProfile.getPreferredLanguage();
+            // 如果用戶偏好與源語言相同，使用默認規則
+            if (sourceLanguage.equals(userProfile.getPreferredLanguage()) ||
+                    (sourceLanguage.startsWith("zh") && userProfile.getPreferredLanguage().startsWith("zh"))) {
+                targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+            } else {
+                targetLanguage = userProfile.getPreferredLanguage();
+            }
         } else {
-            targetLanguage = ("zh".equals(sourceLanguage))
-                    ? appConfig.getDefaultTargetLanguageForChinese()
-                    : appConfig.getDefaultTargetLanguageForOthers();
+            targetLanguage = getDefaultTargetLanguage(sourceLanguage);
         }
 
         // 選擇 AI 服務

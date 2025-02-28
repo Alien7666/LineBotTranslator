@@ -67,6 +67,13 @@ public class LanguageUtils {
         LANGUAGE_NAME_TO_CODE.put("丹麥語", "da");
         LANGUAGE_NAME_TO_CODE.put("芬蘭語", "fi");
         LANGUAGE_NAME_TO_CODE.put("印地語", "hi");
+        LANGUAGE_NAME_TO_CODE.put("jp", "ja");
+        LANGUAGE_NAME_TO_CODE.put("jap", "ja");
+        LANGUAGE_NAME_TO_CODE.put("japan", "ja");
+        LANGUAGE_NAME_TO_CODE.put("cn", "zh-CN");
+        LANGUAGE_NAME_TO_CODE.put("tw", "zh-TW");
+        LANGUAGE_NAME_TO_CODE.put("kr", "ko");
+
     }
 
     /**
