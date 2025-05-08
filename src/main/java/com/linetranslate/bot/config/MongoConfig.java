@@ -9,6 +9,7 @@ import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
+import org.bson.Document;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -37,11 +38,14 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
                     .applyConnectionString(connectionString)
                     .build();
 
-            return MongoClients.create(mongoClientSettings);
+            MongoClient client = MongoClients.create(mongoClientSettings);
+            // 測試連接
+            client.getDatabase(mongoDatabaseName).runCommand(new Document("ping", 1));
+            log.info("MongoDB 連接成功");
+            return client;
         } catch (Exception e) {
-            log.error("無法連接到 MongoDB: {}", e.getMessage());
-            // 返回一個假的客戶端，讓應用程式能夠啟動，但功能會受限
-            return null;
+            log.error("無法連接到 MongoDB: {}", e.getMessage(), e);
+            throw new RuntimeException("MongoDB 連接失敗: " + e.getMessage(), e);
         }
     }
 }

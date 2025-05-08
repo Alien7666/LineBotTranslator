@@ -15,6 +15,8 @@ import com.linetranslate.bot.config.GeminiConfig;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
+import com.linetranslate.bot.model.UserProfile;
+
 @Service
 @Slf4j
 public class GeminiService implements AiService {
@@ -23,9 +25,11 @@ public class GeminiService implements AiService {
     private final String apiKey;
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final GeminiConfig geminiConfig;
 
     @Autowired
     public GeminiService(GeminiConfig geminiConfig) {
+        this.geminiConfig = geminiConfig;
         this.modelName = geminiConfig.getModelName();
         this.apiKey = geminiConfig.getApiKey();
 
@@ -185,5 +189,79 @@ public class GeminiService implements AiService {
     @Override
     public String getModelName() {
         return modelName;
+    }
+    
+    /**
+     * 根據用戶資料取得模型名稱
+     * 
+     * @param userProfile 用戶資料
+     * @return 模型名稱
+     */
+    public String getModelName(UserProfile userProfile) {
+        // 如果用戶有指定 Gemini 模型，則使用用戶指定的模型
+        String userModel = userProfile.getGeminiPreferredModel();
+        if (userModel != null && !userModel.isEmpty() && geminiConfig.getAvailableModels().contains(userModel)) {
+            return userModel;
+        }
+        return geminiConfig.getModelName();
+    }
+
+    @Override
+    public String generateText(String prompt) {
+        try {
+            // 建立請求體
+            ObjectNode requestBodyJson = objectMapper.createObjectNode();
+
+            // 添加內容部分
+            ArrayNode contentsArray = requestBodyJson.putArray("contents");
+            ObjectNode contentObject = contentsArray.addObject();
+            ArrayNode partsArray = contentObject.putArray("parts");
+            ObjectNode textPart = partsArray.addObject();
+            textPart.put("text", prompt);
+
+            // 添加生成配置
+            ObjectNode generationConfig = requestBodyJson.putObject("generationConfig");
+            generationConfig.put("temperature", 0.7);
+            generationConfig.put("topK", 40);
+            generationConfig.put("topP", 0.95);
+            generationConfig.put("maxOutputTokens", 1024);
+
+            String requestBody = objectMapper.writeValueAsString(requestBodyJson);
+
+            // 建立請求
+            Request request = new Request.Builder()
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent?key=" + apiKey)
+                    .post(RequestBody.create(requestBody, MediaType.parse("application/json")))
+                    .build();
+
+            // 發送請求
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    log.error("Gemini API 請求失敗: {}", response);
+                    return "文本生成失敗: Gemini API 請求錯誤 " + response.code();
+                }
+
+                String responseBody = response.body().string();
+                JsonNode jsonResponse = objectMapper.readTree(responseBody);
+
+                // 解析回應
+                JsonNode candidatesNode = jsonResponse.path("candidates");
+                if (candidatesNode.isArray() && candidatesNode.size() > 0) {
+                    JsonNode contentNode = candidatesNode.get(0).path("content");
+                    JsonNode partsNode = contentNode.path("parts");
+
+                    if (partsNode.isArray() && partsNode.size() > 0) {
+                        String generatedText = partsNode.get(0).path("text").asText();
+                        return generatedText.trim();
+                    }
+                }
+
+                log.error("無法從 Gemini 回應中解析生成結果: {}", responseBody);
+                return "文本生成失敗: 無法解析回應";
+            }
+        } catch (IOException e) {
+            log.error("Gemini 文本生成失敗: {}", e.getMessage());
+            return "文本生成失敗: " + e.getMessage();
+        }
     }
 }

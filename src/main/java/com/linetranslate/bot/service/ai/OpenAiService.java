@@ -1,7 +1,6 @@
 package com.linetranslate.bot.service.ai;
 
 import com.theokanning.openai.completion.chat.*;
-import com.theokanning.openai.image.CreateImageRequest;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +14,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.linetranslate.bot.model.UserProfile;
+
 @Service
 @Slf4j
 public class OpenAiService implements AiService {
@@ -25,6 +26,7 @@ public class OpenAiService implements AiService {
     @Autowired
     public OpenAiService(OpenAiConfig openAiConfig, @Qualifier("openAiClient") @Autowired(required = false) com.theokanning.openai.service.OpenAiService openAiClient) {
         this.openAiClient = openAiClient;
+        this.openAiConfig = openAiConfig;
         this.modelName = openAiConfig.getModelName();
 
         if (openAiClient != null) {
@@ -129,9 +131,62 @@ public class OpenAiService implements AiService {
         return "openai";
     }
 
+    private final OpenAiConfig openAiConfig;
+    
     @Override
     public String getModelName() {
         return modelName;
+    }
+    
+    /**
+     * 根據用戶資料取得模型名稱
+     * 
+     * @param userProfile 用戶資料
+     * @return 模型名稱
+     */
+    public String getModelName(UserProfile userProfile) {
+        // 如果用戶有指定 OpenAI 模型，則使用用戶指定的模型
+        String userModel = userProfile.getOpenaiPreferredModel();
+        if (userModel != null && !userModel.isEmpty() && openAiConfig.getAvailableModels().contains(userModel)) {
+            return userModel;
+        }
+        return openAiConfig.getModelName();
+    }
+    @Override
+    public String generateText(String prompt) {
+        if (openAiClient == null) {
+            log.warn("OpenAI 客戶端未初始化，無法生成文本");
+            return "生成失敗: OpenAI API 未正確配置";
+        }
+
+        try {
+            List<ChatMessage> messages = new ArrayList<>();
+
+            // 系統訊息設定文本生成任務
+            ChatMessage systemMessage = new ChatMessage(ChatMessageRole.SYSTEM.value(),
+                    "你是一個專業的語言助手。請根據用戶的提示生成回應。");
+            messages.add(systemMessage);
+
+            // 用戶訊息包含提示
+            ChatMessage userMessage = new ChatMessage(ChatMessageRole.USER.value(), prompt);
+            messages.add(userMessage);
+
+            // 建立請求
+            ChatCompletionRequest chatCompletionRequest = ChatCompletionRequest.builder()
+                    .model(modelName)
+                    .messages(messages)
+                    .temperature(0.7)  // 適中的溫度使輸出更加多樣化
+                    .build();
+
+            // 執行請求並獲取回應
+            String response = openAiClient.createChatCompletion(chatCompletionRequest)
+                    .getChoices().get(0).getMessage().getContent();
+
+            return response.trim();
+        } catch (Exception e) {
+            log.error("OpenAI 文本生成失敗: {}", e.getMessage());
+            return "文本生成失敗: " + e.getMessage();
+        }
     }
 
     // 內部類用於處理消息內容

@@ -30,6 +30,9 @@ public class UserProfile {
     private String statusMessage;
     private String preferredLanguage;      // 用戶偏好的語言 (翻譯目標)
     private String preferredAiProvider;    // 用戶偏好的 AI 提供者 (openai 或 gemini)
+    private String openaiPreferredModel;   // 用戶偏好的 OpenAI 模型
+    private String geminiPreferredModel;   // 用戶偏好的 Gemini 模型
+    private String preferredChineseTargetLanguage; // 用戶偏好的中文翻譯目標語言
 
     @Builder.Default
     private List<String> recentTranslations = new ArrayList<>();

@@ -80,6 +80,29 @@ public class LineUserProfileService {
     }
 
     /**
+     * 獲取用戶資料對象
+     * 
+     * @param userId 用戶 ID
+     * @return 用戶資料對象，如果不存在則返回 null
+     */
+    public UserProfile getUserProfile(String userId) {
+        Optional<UserProfile> userProfileOptional = userProfileRepository.findByUserId(userId);
+        
+        if (userProfileOptional.isPresent()) {
+            return userProfileOptional.get();
+        } else {
+            // 如果用戶不存在，嘗試同步用戶資料
+            try {
+                syncUserProfile(userId);
+                return userProfileRepository.findByUserId(userId).orElse(null);
+            } catch (Exception e) {
+                log.error("無法獲取用戶資料: {}", e.getMessage());
+                return null;
+            }
+        }
+    }
+    
+    /**
      * 獲取用戶資料信息
      */
     public String getUserProfileInfo(String userId) {
@@ -97,7 +120,26 @@ public class LineUserProfileService {
             info.append("【用戶資料】\n");
 
             // 顯示用戶名稱
-            info.append("用戶：").append(profile.getDisplayName()).append("\n\n");
+            String displayName = profile.getDisplayName();
+            if (displayName == null || displayName.isEmpty()) {
+                // 如果用戶名稱為 null，嘗試重新同步用戶資料
+                try {
+                    syncUserProfile(userId);
+                    // 重新獲取用戶資料
+                    Optional<UserProfile> refreshedProfile = userProfileRepository.findByUserId(userId);
+                    if (refreshedProfile.isPresent()) {
+                        displayName = refreshedProfile.get().getDisplayName();
+                    }
+                } catch (Exception e) {
+                    log.error("重新同步用戶資料失敗: {}", e.getMessage());
+                }
+                
+                // 如果仍然為 null，使用預設值
+                if (displayName == null || displayName.isEmpty()) {
+                    displayName = "用戶" + userId.substring(Math.max(0, userId.length() - 6));
+                }
+            }
+            info.append("用戶：").append(displayName).append("\n\n");
 
             // 顯示翻譯統計
             info.append("【翻譯統計】\n");
@@ -106,9 +148,9 @@ public class LineUserProfileService {
             info.append("圖片翻譯：").append(imageTranslations).append("\n\n");
 
             // 顯示偏好設置
-            info.append("【系統設置】\n");
-            String aiProvider = profile.getPreferredAiProvider();
-            info.append("偏好的 AI 引擎：").append(aiProvider != null ? aiProvider : "預設").append("\n");
+            // info.append("【系統設置】\n");
+            // String aiProvider = profile.getPreferredAiProvider();
+            // info.append("偏好的 AI 引擎：").append(aiProvider != null ? aiProvider : "預設").append("\n");
 
             return info.toString();
         } else {

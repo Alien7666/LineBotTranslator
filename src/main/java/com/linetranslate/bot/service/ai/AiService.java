@@ -36,4 +36,12 @@ public interface AiService {
      * @return 模型名稱
      */
     String getModelName();
+    
+    /**
+     * 使用 AI 生成文本
+     *
+     * @param prompt 提示詞
+     * @return 生成的文本
+     */
+    String generateText(String prompt);
 }

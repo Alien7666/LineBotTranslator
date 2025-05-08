@@ -13,6 +13,8 @@ import com.optimaize.langdetect.text.TextObjectFactory;
 import jakarta.annotation.PostConstruct;
 
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +28,15 @@ public class LanguageDetectionService {
 
     private LanguageDetector languageDetector;
     private TextObjectFactory textObjectFactory;
+    
+    @Autowired
+    private AiLanguageDetectionService aiLanguageDetectionService;
+    
+    @Value("${app.language-detection.use-ai:true}")
+    private boolean useAiDetection;
+    
+    @Value("${app.language-detection.default-chinese:zh-tw}")
+    private String defaultChineseType;
 
     @PostConstruct
     public void init() {
@@ -59,11 +70,30 @@ public class LanguageDetectionService {
         }
 
         try {
-            // 先檢查是否包含中文字符
-            if (containsChineseCharacters(text)) {
-                return "zh";
+            // 如果啟用 AI 語言檢測，則使用 AI 模型進行檢測
+            if (useAiDetection) {
+                log.debug("使用 AI 模型進行語言檢測");
+                String aiDetectedLanguage = aiLanguageDetectionService.detectLanguage(text);
+                
+                // 如果 AI 檢測失敗，則使用傳統方法
+                if ("unknown".equals(aiDetectedLanguage)) {
+                    log.debug("AI 語言檢測失敗，使用傳統方法");
+                } else {
+                    log.info("AI 檢測到的語言: {}", aiDetectedLanguage);
+                    return aiDetectedLanguage;
+                }
+            }
+            
+            // 傳統方法：計算中文字符的比例
+            double chineseRatio = calculateChineseCharacterRatio(text);
+            log.debug("文本中中文字符的比例: {}", chineseRatio);
+            
+            // 如果中文字符比例超過 30%，則認為是中文
+            if (chineseRatio > 0.3) {
+                return defaultChineseType;
             }
 
+            // 使用語言檢測器進行檢測
             TextObject textObject = textObjectFactory.forText(text);
             String detectedLanguage = languageDetector.detect(textObject)
                     .or(LdLocale.fromString("en"))
@@ -71,7 +101,7 @@ public class LanguageDetectionService {
 
             // 處理各種中文變體
             if (detectedLanguage.startsWith("zh")) {
-                return "zh";
+                return defaultChineseType;
             }
 
             return detectedLanguage;
@@ -81,10 +111,11 @@ public class LanguageDetectionService {
         }
     }
 
-    // 檢測中文字符的方法
-    private boolean containsChineseCharacters(String text) {
-        return text.codePoints().anyMatch(codepoint ->
-                Character.UnicodeScript.of(codepoint) == Character.UnicodeScript.HAN);
+    // 計算中文字符的比例
+    private double calculateChineseCharacterRatio(String text) {
+        long chineseCount = text.codePoints().filter(codepoint ->
+                Character.UnicodeScript.of(codepoint) == Character.UnicodeScript.HAN).count();
+        return (double) chineseCount / text.length();
     }
 
     /**

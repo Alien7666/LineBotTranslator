@@ -3,9 +3,11 @@ package com.linetranslate.bot.service.translation;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,8 +22,8 @@ import com.linetranslate.bot.repository.TranslationRecordRepository;
 import com.linetranslate.bot.repository.UserProfileRepository;
 import com.linetranslate.bot.service.ai.AiService;
 import com.linetranslate.bot.service.ai.AiServiceFactory;
+import com.linetranslate.bot.service.translation.LanguageDetectionService;
 import com.linetranslate.bot.util.LanguageUtils;
-
 import lombok.extern.slf4j.Slf4j;
 
 @Service
@@ -168,14 +170,14 @@ public class TranslationService {
             // 如果用戶有偏好設置，但輸入的語言與偏好語言相同，則使用默認規則
             if (sourceLanguage.equals(userProfile.getPreferredLanguage()) ||
                     (sourceLanguage.startsWith("zh") && userProfile.getPreferredLanguage().startsWith("zh"))) {
-                targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+                targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
             } else {
                 // 使用用戶的偏好語言
                 targetLanguage = userProfile.getPreferredLanguage();
             }
         } else {
             // 如果沒有偏好，使用默認規則
-            targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+            targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
         }
 
         log.info("自動檢測語言: {}, 目標語言: {}", sourceLanguage, targetLanguage);
@@ -185,11 +187,27 @@ public class TranslationService {
 
     /**
      * 根據源語言選擇默認的目標語言
+     *
+     * @param sourceLanguage 源語言
+     * @param userProfile 用戶資料
+     * @return 目標語言代碼
      */
-    private String getDefaultTargetLanguage(String sourceLanguage) {
-        return ("zh".equals(sourceLanguage))
-                ? appConfig.getDefaultTargetLanguageForChinese()
-                : appConfig.getDefaultTargetLanguageForOthers();
+    private String getDefaultTargetLanguage(String sourceLanguage, UserProfile userProfile) {
+        // 如果是中文，且用戶設置了偏好的中文翻譯目標語言
+        if (sourceLanguage != null && (sourceLanguage.startsWith("zh") || "zh".equals(sourceLanguage))) {
+            String preferredChineseTargetLanguage = userProfile.getPreferredChineseTargetLanguage();
+            if (preferredChineseTargetLanguage != null && !preferredChineseTargetLanguage.isEmpty()) {
+                return preferredChineseTargetLanguage;
+            }
+            return appConfig.getDefaultTargetLanguageForChinese();
+        } else {
+            // 如果不是中文，使用用戶偏好的語言或默認設置
+            String preferredLanguage = userProfile.getPreferredLanguage();
+            if (preferredLanguage != null && !preferredLanguage.isEmpty()) {
+                return preferredLanguage;
+            }
+            return appConfig.getDefaultTargetLanguageForOthers();
+        }
     }
 
     /**
@@ -199,6 +217,9 @@ public class TranslationService {
         // 選擇 AI 服務
         AiService aiService = aiServiceFactory.getService(userProfile.getPreferredAiProvider());
 
+        // 先偵測源語言
+        String detectedLanguage = languageDetectionService.detectLanguage(sourceText);
+        
         // 執行翻譯
         String translatedText = translateWithService(aiService, sourceText, targetLanguage);
 
@@ -206,14 +227,17 @@ public class TranslationService {
         long processingTimeMs = Duration.between(start, Instant.now()).toMillis();
 
         // 保存翻譯記錄
-        saveTranslationRecord(userId, sourceText, languageDetectionService.detectLanguage(sourceText),
+        saveTranslationRecord(userId, sourceText, detectedLanguage,
                 targetLanguage, translatedText, aiService.getProviderName(),
                 aiService.getModelName(), processingTimeMs, false, null);
 
         // 更新用戶資料
         updateUserProfileAfterTranslation(userProfile, translatedText, targetLanguage);
 
-        return translatedText;
+        // 在翻譯結果中添加偵測到的語言資訊和翻譯目標語言
+        String sourceLanguageName = LanguageUtils.toChineseName(detectedLanguage);
+        String targetLanguageName = LanguageUtils.toChineseName(targetLanguage);
+        return translatedText + "\n\n[偵測到: " + sourceLanguageName + " | 翻譯成: " + targetLanguageName + "]";
     }
 
     /**
@@ -286,12 +310,12 @@ public class TranslationService {
             // 如果用戶偏好與源語言相同，使用默認規則
             if (sourceLanguage.equals(userProfile.getPreferredLanguage()) ||
                     (sourceLanguage.startsWith("zh") && userProfile.getPreferredLanguage().startsWith("zh"))) {
-                targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+                targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
             } else {
                 targetLanguage = userProfile.getPreferredLanguage();
             }
         } else {
-            targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+            targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
         }
 
         // 選擇 AI 服務
@@ -447,5 +471,221 @@ public class TranslationService {
     public List<String> getRecentLanguages(String userId) {
         UserProfile userProfile = ensureUserProfileExists(userId);
         return userProfile.getRecentLanguagesList();
+    }
+    /**
+     * 獲取用戶偏好的 AI 提供者
+     *
+     * @param userId 用戶 ID
+     * @return 用戶偏好的 AI 提供者 (openai 或 gemini)
+     */
+    public String getPreferredProvider(String userId) {
+        UserProfile userProfile = ensureUserProfileExists(userId);
+        String provider = userProfile.getPreferredAiProvider();
+        
+        if (provider == null || provider.isEmpty()) {
+            provider = "openai"; // 預設為 OpenAI
+        }
+        
+        return provider;
+    }
+    
+    /**
+     * 設置用戶偏好的中文翻譯目標語言
+     * 
+     * @param userId 用戶 ID
+     * @param targetLanguage 目標語言代碼或名稱
+     * @return 設置結果消息
+     */
+    public String setPreferredChineseTargetLanguage(String userId, String targetLanguage) {
+        UserProfile userProfile = ensureUserProfileExists(userId);
+        
+        // 將語言名稱轉換為語言代碼
+        String languageCode = LanguageUtils.toLanguageCode(targetLanguage);
+        
+        if (!LanguageUtils.isSupported(languageCode)) {
+            return "不支援的語言: " + targetLanguage +
+                   "。請使用支援的語言代碼（如 en、ja、ko）或語言名稱（如 英文、日文、韓文）。";
+        }
+        
+        // 保存用戶偏好的中文翻譯目標語言
+        String oldLanguage = userProfile.getPreferredChineseTargetLanguage();
+        userProfile.setPreferredChineseTargetLanguage(languageCode);
+        userProfileRepository.save(userProfile);
+        
+        // 準備回應消息
+        String languageName = LanguageUtils.toChineseName(languageCode);
+        StringBuilder result = new StringBuilder();
+        if (oldLanguage != null && !oldLanguage.isEmpty() && oldLanguage.equals(languageCode)) {
+            result.append("已設置中文翻譯的預設目標語言為 ").append(languageName);
+        } else if (oldLanguage != null && !oldLanguage.isEmpty()) {
+            result.append("已將中文翻譯的預設目標語言從 ").append(LanguageUtils.toChineseName(oldLanguage))
+                  .append(" 更改為 ").append(languageName);
+        } else {
+            result.append("已設置中文翻譯的預設目標語言為 ").append(languageName);
+        }
+        
+        return result.toString();
+    }
+    
+    /**
+     * 獲取用戶的所有設定狀態
+     *
+     * @param userId 用戶 ID
+     * @return 用戶設定狀態的字符串表示
+     */
+    public String getUserStatus(String userId) {
+        UserProfile userProfile = ensureUserProfileExists(userId);
+        
+        StringBuilder status = new StringBuilder();
+        status.append("您的翻譯設定：\n\n");
+        
+        // 偏好的 AI 提供者
+        String provider = userProfile.getPreferredAiProvider();
+        if (provider != null && !provider.isEmpty()) {
+            status.append("• 偏好的 AI 提供者：").append(provider.toUpperCase()).append("\n");
+            
+            // 偏好的模型
+            String model = "";
+            if ("openai".equalsIgnoreCase(provider)) {
+                model = userProfile.getOpenaiPreferredModel();
+                if (model == null || model.isEmpty()) {
+                    model = "gpt-4o"; // 預設模型
+                }
+            } else if ("gemini".equalsIgnoreCase(provider)) {
+                model = userProfile.getGeminiPreferredModel();
+                if (model == null || model.isEmpty()) {
+                    model = "gemini-pro"; // 預設模型
+                }
+            }
+            status.append("• 目前使用的模型：").append(model).append("\n");
+        } else {
+            status.append("• 偏好的 AI 提供者：未設定（預設：OpenAI）\n");
+            status.append("• 目前使用的模型：gpt-4o\n");
+        }
+        
+        // 偏好的預設翻譯語言
+        String preferredLanguage = userProfile.getPreferredLanguage();
+        if (preferredLanguage != null && !preferredLanguage.isEmpty()) {
+            status.append("• 預設翻譯語言：").append(LanguageUtils.toChineseName(preferredLanguage)).append("\n");
+        } else {
+            status.append("• 預設翻譯語言：未設定（預設：英文）\n");
+        }
+        
+        // 偏好的中文翻譯目標語言
+        String preferredChineseTargetLanguage = userProfile.getPreferredChineseTargetLanguage();
+        if (preferredChineseTargetLanguage != null && !preferredChineseTargetLanguage.isEmpty()) {
+            status.append("• 中文翻譯的預設目標語言：").append(LanguageUtils.toChineseName(preferredChineseTargetLanguage)).append("\n");
+        } else {
+            status.append("• 中文翻譯的預設目標語言：未設定（預設：英文）\n");
+        }
+        
+        // 翻譯統計
+        status.append("\n翻譯統計：\n");
+        status.append("• 文字翻譯：").append(userProfile.getTextTranslations()).append(" 次\n");
+        status.append("• 圖片翻譯：").append(userProfile.getImageTranslations()).append(" 次\n");
+        status.append("• 總翻譯次數：").append(userProfile.getTotalTranslations()).append(" 次\n");
+        
+        // 最近使用的語言
+        List<String> recentLanguages = userProfile.getRecentLanguagesList();
+        if (!recentLanguages.isEmpty()) {
+            status.append("\n最近使用的語言：\n");
+            for (int i = 0; i < recentLanguages.size(); i++) {
+                String lang = recentLanguages.get(i);
+                status.append("• ").append(LanguageUtils.toChineseName(lang)).append(" (").append(lang).append(")\n");
+            }
+        }
+        
+        // 用戶資訊
+        status.append("\n用戶資訊：\n");
+        status.append("• 用戶 ID：").append(userProfile.getUserId().substring(Math.max(0, userProfile.getUserId().length() - 6))).append("\n");
+        if (userProfile.getDisplayName() != null && !userProfile.getDisplayName().isEmpty()) {
+            status.append("• 用戶名稱：").append(userProfile.getDisplayName()).append("\n");
+        }
+        if (userProfile.getFirstInteractionAt() != null) {
+            status.append("• 首次使用時間：").append(userProfile.getFirstInteractionAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
+        }
+        if (userProfile.getLastInteractionAt() != null) {
+            status.append("• 上次使用時間：").append(userProfile.getLastInteractionAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
+        }
+        
+        return status.toString();
+    }
+    
+    /**
+     * 獲取默認的 AI 提供者
+     * 
+     * @return 默認的 AI 提供者名稱
+     */
+    public String getDefaultProvider() {
+        return appConfig.getDefaultAiProvider();
+    }
+    
+    /**
+     * 設置用戶偏好的 AI 模型
+     * 
+     * @param userId 用戶 ID
+     * @param modelName 模型名稱
+     * @return 設置結果消息
+     */
+    public String setPreferredModel(String userId, String modelName) {
+        UserProfile userProfile = ensureUserProfileExists(userId);
+        String currentProvider = userProfile.getPreferredAiProvider();
+        
+        // 檢查模型屬於哪個提供者
+        boolean isOpenAiModel = false;
+        boolean isGeminiModel = false;
+        
+        // 簡單的檢查邏輯，可以根據實際情況擴充
+        if (modelName.toLowerCase().contains("gpt") || modelName.toLowerCase().startsWith("o")) {
+            isOpenAiModel = true;
+        } else if (modelName.toLowerCase().contains("gemini")) {
+            isGeminiModel = true;
+        }
+        
+        String oldModel;
+        String newProvider = currentProvider;
+        
+        // 根據模型類型設置相應的提供者和模型
+        if (isOpenAiModel) {
+            oldModel = userProfile.getOpenaiPreferredModel();
+            userProfile.setOpenaiPreferredModel(modelName);
+            newProvider = "openai";
+        } else if (isGeminiModel) {
+            oldModel = userProfile.getGeminiPreferredModel();
+            userProfile.setGeminiPreferredModel(modelName);
+            newProvider = "gemini";
+        } else {
+            // 如果無法確定模型類型，則根據當前提供者設置
+            if ("openai".equals(currentProvider)) {
+                oldModel = userProfile.getOpenaiPreferredModel();
+                userProfile.setOpenaiPreferredModel(modelName);
+            } else {
+                oldModel = userProfile.getGeminiPreferredModel();
+                userProfile.setGeminiPreferredModel(modelName);
+            }
+        }
+        
+        // 如果提供者發生變化，更新提供者設置
+        if (!newProvider.equals(currentProvider)) {
+            userProfile.setPreferredAiProvider(newProvider);
+        }
+        
+        userProfileRepository.save(userProfile);
+        
+        StringBuilder result = new StringBuilder();
+        if (oldModel != null && !oldModel.isEmpty() && oldModel.equals(modelName)) {
+            result.append("已設置 AI 模型為 ").append(modelName);
+        } else if (oldModel != null && !oldModel.isEmpty()) {
+            result.append("已將 ").append(newProvider).append(" 模型從 ").append(oldModel).append(" 更改為 ").append(modelName);
+        } else {
+            result.append("已設置 ").append(newProvider).append(" 模型為 ").append(modelName);
+        }
+        
+        // 如果提供者發生變化，添加提示信息
+        if (!newProvider.equals(currentProvider)) {
+            result.append("\n同時已將 AI 提供者設置為 ").append(newProvider);
+        }
+        
+        return result.toString();
     }
 }

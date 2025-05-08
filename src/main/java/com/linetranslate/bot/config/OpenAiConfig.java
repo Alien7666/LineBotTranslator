@@ -10,6 +10,8 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 
 @Configuration
 @Getter
@@ -24,6 +26,22 @@ public class OpenAiConfig {
 
     @Value("${openai.api.url:${OPENAI_API_URL:https://api.openai.com/v1/chat/completions}}")
     private String apiUrl;
+
+    @Value("${openai.available.models:${OPENAI_AVAILABLE_MODELS:gpt-4o,gpt-3.5-turbo}}")
+    private String availableModelsString;
+
+    private List<String> availableModels;
+
+    /**
+     * 獲取可用模型列表
+     * @return 可用模型列表
+     */
+    public List<String> getAvailableModels() {
+        if (availableModels == null) {
+            availableModels = Arrays.asList(availableModelsString.split(","));
+        }
+        return availableModels;
+    }
 
     @Bean(name = "openAiClient")
     public OpenAiService openAiClient() {

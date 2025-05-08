@@ -1,36 +1,35 @@
-HELP.md
+# 忽略配置文件
+.env
+
+# 編譯輸出
 target/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
 
-### STS ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-
-### IntelliJ IDEA ###
-.idea
+# IDE 相關文件
+.idea/
 *.iws
 *.iml
 *.ipr
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### VS Code ###
 .vscode/
-/.env
-/linebot.json
+.settings/
+.classpath
+.project
 
+# 日誌文件
+logs/
+*.log
+
+# 臨時文件
+tmp/
+temp/
+
+# 系統文件
+.DS_Store
+Thumbs.db
+
+# 敏感文件
+*.pem
+*.key
+linebot.json

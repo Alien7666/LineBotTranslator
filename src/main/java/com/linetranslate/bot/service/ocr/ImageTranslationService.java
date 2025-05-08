@@ -1,23 +1,11 @@
 package com.linetranslate.bot.service.ocr;
 
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.Graphics2D;
-import java.awt.Rectangle;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-
-import javax.imageio.ImageIO;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,7 +20,7 @@ import com.linetranslate.bot.repository.TranslationRecordRepository;
 import com.linetranslate.bot.repository.UserProfileRepository;
 import com.linetranslate.bot.service.ai.AiService;
 import com.linetranslate.bot.service.ai.AiServiceFactory;
-import com.linetranslate.bot.service.ocr.OcrService.TextBlock;
+import com.linetranslate.bot.service.storage.MinioStorageService;
 import com.linetranslate.bot.service.translation.LanguageDetectionService;
 import com.linetranslate.bot.service.translation.TranslationService;
 
@@ -50,9 +38,19 @@ public class ImageTranslationService {
     private final TranslationRecordRepository translationRecordRepository;
     private final UserProfileRepository userProfileRepository;
     private final AppConfig appConfig;
+    private final MinioStorageService minioStorageService;
 
     @Value("${app.ocr.enabled:true}")
     private boolean ocrEnabled;
+    
+    /**
+     * 檢查 OCR 功能是否啟用
+     * 
+     * @return OCR 功能是否啟用
+     */
+    public boolean isOcrEnabled() {
+        return ocrEnabled;
+    }
 
     @Autowired
     public ImageTranslationService(
@@ -63,7 +61,8 @@ public class ImageTranslationService {
             LineBlobClient lineBlobClient,
             TranslationRecordRepository translationRecordRepository,
             UserProfileRepository userProfileRepository,
-            AppConfig appConfig) {
+            AppConfig appConfig,
+            MinioStorageService minioStorageService) {
         this.ocrService = ocrService;
         this.translationService = translationService;
         this.languageDetectionService = languageDetectionService;
@@ -72,6 +71,7 @@ public class ImageTranslationService {
         this.translationRecordRepository = translationRecordRepository;
         this.userProfileRepository = userProfileRepository;
         this.appConfig = appConfig;
+        this.minioStorageService = minioStorageService;
     }
 
     /**
@@ -93,19 +93,43 @@ public class ImageTranslationService {
             // 獲取用戶資料
             UserProfile userProfile = ensureUserProfileExists(userId);
 
-            // 獲取圖片內容
-            MessageContentResponse response = lineBlobClient.getMessageContent(messageId).get();
-            InputStream imageStream = response.getStream();
-
-            // 準備OCR識別文字
+            // 獲取圖片內容並轉換為Base64
             String recognizedText;
 
-            // 如果Google Vision可用，使用它
-            if (ocrService != null) {
-                recognizedText = ocrService.recognizeText(imageStream);
-            } else {
-                // 使用AI服務進行圖像識別
-                recognizedText = processImageWithAiService(userId, messageId, userProfile);
+            try {
+                MessageContentResponse response = lineBlobClient.getMessageContent(messageId).get();
+                byte[] imageBytes = response.getStream().readAllBytes();
+                String base64Image = Base64.getEncoder().encodeToString(imageBytes);
+                
+                // 上傳圖片到 MinIO 並獲取 URL
+                // LINE 平台的圖片通常是 JPEG 格式
+                String contentType = "image/jpeg";
+                String imageUrl = minioStorageService.uploadImage(imageBytes, contentType);
+                log.info("圖片已上傳到 MinIO，URL: {}", imageUrl);
+
+                // 準備OCR識別文字
+                if (ocrService != null) {
+                    // 如果Google Vision可用，使用它
+                    recognizedText = ocrService.recognizeText(new java.io.ByteArrayInputStream(imageBytes));
+                } else {
+                    // 使用AI服務進行圖像識別
+                    log.info("Google Vision不可用，使用AI模型識別圖片文字");
+
+                    // 選擇AI服務
+                    AiService aiService = aiServiceFactory.getService(userProfile.getPreferredAiProvider());
+
+                    // 構建提示詞
+                    String prompt = "請識別這張圖片中的所有文字，只返回文字內容，不要添加任何其他描述或解釋。";
+
+                    // 處理圖片
+                    recognizedText = aiService.processImage(prompt, "data:image/jpeg;base64," + base64Image);
+                }
+                
+                // 保存圖片 URL 到 ThreadLocal 變量，以便在保存翻譯記錄時使用
+                ImageContext.setCurrentImageUrl(imageUrl);
+            } catch (Exception e) {
+                log.error("圖片處理失敗: {}", e.getMessage(), e);
+                return "圖片處理失敗: " + e.getMessage();
             }
 
             if (recognizedText == null || recognizedText.trim().isEmpty()) {
@@ -123,12 +147,12 @@ public class ImageTranslationService {
                 // 如果用戶偏好與源語言相同，使用默認規則
                 if (sourceLanguage.equals(userProfile.getPreferredLanguage()) ||
                         (sourceLanguage.startsWith("zh") && userProfile.getPreferredLanguage().startsWith("zh"))) {
-                    targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+                    targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
                 } else {
                     targetLanguage = userProfile.getPreferredLanguage();
                 }
             } else {
-                targetLanguage = getDefaultTargetLanguage(sourceLanguage);
+                targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
             }
 
             // 選擇 AI 服務
@@ -140,10 +164,16 @@ public class ImageTranslationService {
             // 計算處理時間
             long processingTimeMs = Duration.between(start, Instant.now()).toMillis();
 
+            // 獲取圖片 URL
+            String storedImageUrl = ImageContext.getCurrentImageUrl();
+            
             // 保存翻譯記錄
             saveTranslationRecord(userId, recognizedText, sourceLanguage, targetLanguage,
                     translatedText, aiService.getProviderName(), aiService.getModelName(),
-                    processingTimeMs, true, null);
+                    processingTimeMs, true, storedImageUrl);
+            
+            // 清除圖片上下文
+            ImageContext.clear();
 
             // 更新用戶資料
             updateUserProfileAfterImageTranslation(userProfile);
@@ -153,6 +183,12 @@ public class ImageTranslationService {
             resultBuilder.append("【圖片文字辨識結果】\n\n");
             resultBuilder.append("識別的文字：\n").append(recognizedText).append("\n\n");
             resultBuilder.append("翻譯結果：\n").append(translatedText);
+            
+            // 添加偵測到的語言資訊和翻譯目標語言
+            String sourceLanguageName = com.linetranslate.bot.util.LanguageUtils.toChineseName(sourceLanguage);
+            String targetLanguageName = com.linetranslate.bot.util.LanguageUtils.toChineseName(targetLanguage);
+            resultBuilder.append("\n\n[偵測到: ").append(sourceLanguageName)
+                      .append(" | 翻譯成: ").append(targetLanguageName).append("]");
 
             return resultBuilder.toString();
 
@@ -163,40 +199,31 @@ public class ImageTranslationService {
     }
 
     /**
-     * 使用AI服務處理圖片OCR
+     * 根據源語言和用戶資料選擇默認的目標語言
      */
-    private String processImageWithAiService(String userId, String messageId, UserProfile userProfile) {
-        try {
-            // 重新獲取圖片內容 (因為流只能讀取一次)
-            MessageContentResponse response = lineBlobClient.getMessageContent(messageId).get();
-
-            // 將圖片轉換為Base64
-            byte[] imageBytes = response.getStream().readAllBytes();
-            String base64Image = Base64.getEncoder().encodeToString(imageBytes);
-
-            // 選擇AI服務
-            AiService aiService = aiServiceFactory.getService(userProfile.getPreferredAiProvider());
-
-            // 構建提示詞，請AI服務識別圖片中的文字
-            String prompt = "請識別這張圖片中的所有文字，只返回文字內容，不要添加任何其他描述或解釋。";
-
-            // 處理圖片
-            String result = aiService.processImage(prompt, "data:image/jpeg;base64," + base64Image);
-
-            return result;
-        } catch (Exception e) {
-            log.error("AI圖片OCR處理失敗: {}", e.getMessage(), e);
-            return "圖片OCR處理失敗，請稍後再試。";
+    private String getDefaultTargetLanguage(String sourceLanguage, UserProfile userProfile) {
+        log.info("源語言: {}, 檢查是否為中文", sourceLanguage);
+        // 檢查源語言是否為中文（包括 zh, zh-CN, zh-TW 等）
+        boolean isChinese = sourceLanguage != null && sourceLanguage.startsWith("zh");
+        
+        String targetLanguage;
+        if (isChinese) {
+            // 如果是中文，先檢查用戶是否設置了偏好的中文翻譯目標語言
+            String preferredChineseTargetLanguage = userProfile.getPreferredChineseTargetLanguage();
+            if (preferredChineseTargetLanguage != null && !preferredChineseTargetLanguage.isEmpty()) {
+                targetLanguage = preferredChineseTargetLanguage;
+                log.info("使用用戶偏好的中文翻譯目標語言: {}", targetLanguage);
+            } else {
+                targetLanguage = appConfig.getDefaultTargetLanguageForChinese();
+                log.info("使用系統預設的中文翻譯目標語言: {}", targetLanguage);
+            }
+        } else {
+            // 如果不是中文，使用系統預設的目標語言
+            targetLanguage = appConfig.getDefaultTargetLanguageForOthers();
+            log.info("源語言不是中文，使用系統預設的目標語言: {}", targetLanguage);
         }
-    }
-
-    /**
-     * 根據源語言選擇默認的目標語言
-     */
-    private String getDefaultTargetLanguage(String sourceLanguage) {
-        return ("zh".equals(sourceLanguage))
-                ? appConfig.getDefaultTargetLanguageForChinese()
-                : appConfig.getDefaultTargetLanguageForOthers();
+        
+        return targetLanguage;
     }
 
     /**
