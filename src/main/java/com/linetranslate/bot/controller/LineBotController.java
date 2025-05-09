@@ -147,9 +147,9 @@ public class LineBotController {
             case "models":
                 return new TextMessage(getAvailableModelsMessage());
 
-            case "setlang":
+            case "外文翻譯":
                 if (parts.length < 2) {
-                    return new TextMessage("請指定語言代碼或名稱。例如：/setlang en 或 /setlang 日文");
+                    return new TextMessage("請指定語言代碼或名稱。例如：/外文翻譯 en 或 /外文翻譯 日文");
                 }
                 String language = parts[1];
                 String resultSetLang = translationService.setPreferredLanguage(userId, language);
@@ -164,9 +164,9 @@ public class LineBotController {
             case "lang":
                 return createLanguageSelectionMessage(userId);
                 
-            case "c2lang":
+            case "中文翻譯":
                 if (parts.length < 2) {
-                    return new TextMessage("請指定中文翻譯的預設目標語言。例如：/c2lang vi 或 /c2lang 越南文");
+                    return new TextMessage("請指定中文翻譯的預設目標語言。例如：/中文翻譯 vi 或 /中文翻譯 越南文");
                 }
                 String targetLanguage = parts[1];
                 String resultSetC2Lang = translationService.setPreferredChineseTargetLanguage(userId, targetLanguage);
@@ -247,7 +247,7 @@ public class LineBotController {
         StringBuilder sb = new StringBuilder();
         sb.append("🌐 語言選擇\n\n");
         sb.append("請使用以下命令設置您偏好的語言：\n");
-        sb.append("/setlang [語言代碼]\n\n");
+        sb.append("/外文翻譯 [語言代碼]\n\n");
         
         sb.append("常用語言代碼：\n");
         sb.append("🇺🇸 英文: en\n");
@@ -334,19 +334,19 @@ public class LineBotController {
      */
     private String getHelpMessage() {
         return "🤖 LINE 翻譯機器人幫助\n\n" +
-                "【💬 基本使用】\n" +
+                "[💬 基本使用]\n" +
                 "• 直接發送文字 → 自動檢測語言並翻譯\n" +
                 "• 發送圖片 → 識別圖片中的文字並翻譯\n" +
                 "• 快速翻譯:[語言代碼] [文本] → 翻譯到指定語言\n\n" +
                 
-                "【⚙️ 設置命令】\n" +
+                "[⚙️ 設置命令]\n" +
                 "🔄 /setai [提供者] - 設置 AI 提供者 (openai 或 gemini)\n" +
-                "🔠 /setlang [語言] - 設置偏好的目標語言\n" +
-                "🀄 /c2lang [語言] - 設置中文翻譯的目標語言\n" +
+                "🔠 /外文翻譯 [語言] - 設置偏好的目標語言\n" +
+                "🀄 /中文翻譯 [語言] - 設置中文翻譯的目標語言\n" +
                 "🤖 /setmodel [模型] - 設置 AI 模型\n" +
                 "📋 /models - 顯示可用的 AI 模型\n\n" +
                 
-                "【ℹ️ 其他命令】\n" +
+                "[ℹ️ 其他命令]\n" +
                 "❓ /help - 顯示此幫助信息\n" +
                 "ℹ️ /about - 關於此機器人\n" +
                 "🔤 /lang - 顯示語言選擇菜單\n" +

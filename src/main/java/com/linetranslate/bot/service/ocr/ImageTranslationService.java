@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +25,7 @@ import com.linetranslate.bot.service.ai.AiServiceFactory;
 import com.linetranslate.bot.service.storage.MinioStorageService;
 import com.linetranslate.bot.service.translation.LanguageDetectionService;
 import com.linetranslate.bot.service.translation.TranslationService;
+import com.linetranslate.bot.util.LanguageUtils;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -39,6 +42,12 @@ public class ImageTranslationService {
     private final UserProfileRepository userProfileRepository;
     private final AppConfig appConfig;
     private final MinioStorageService minioStorageService;
+    
+    // 翻譯指令的正則表達式模式（中文語言名稱）
+    private static final Pattern TRANSLATION_COMMAND_PATTERN_CN = Pattern.compile("翻譯成([\\u4e00-\\u9fa5]+)\\s*(.*)");
+
+    // 翻譯指令的正則表達式模式（語言代碼）
+    private static final Pattern TRANSLATION_COMMAND_PATTERN_CODE = Pattern.compile("翻譯成([a-zA-Z\\-]+)\\s*(.*)");
 
     @Value("${app.ocr.enabled:true}")
     private boolean ocrEnabled;
@@ -142,16 +151,26 @@ public class ImageTranslationService {
             String sourceLanguage = languageDetectionService.detectLanguage(recognizedText);
 
             // 確定目標語言
-            String targetLanguage;
-            if (userProfile.getPreferredLanguage() != null && !userProfile.getPreferredLanguage().isEmpty()) {
-                // 如果用戶偏好與源語言相同，使用默認規則
-                if (sourceLanguage.equals(userProfile.getPreferredLanguage()) ||
-                        (sourceLanguage.startsWith("zh") && userProfile.getPreferredLanguage().startsWith("zh"))) {
-                    targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
-                } else {
-                    targetLanguage = userProfile.getPreferredLanguage();
-                }
-            } else {
+            String targetLanguage = null;
+            
+            // 檢查文字中是否包含「翻譯成XX文」的指令
+            Matcher matcherCN = TRANSLATION_COMMAND_PATTERN_CN.matcher(recognizedText);
+            Matcher matcherCode = TRANSLATION_COMMAND_PATTERN_CODE.matcher(recognizedText);
+            
+            if (matcherCN.find()) {
+                // 使用用戶指定的中文語言名稱
+                String languageName = matcherCN.group(1);
+                targetLanguage = LanguageUtils.toLanguageCode(languageName);
+                log.info("圖片文字中指定翻譯成: {} ({})", languageName, targetLanguage);
+            } else if (matcherCode.find()) {
+                // 使用用戶指定的語言代碼
+                String languageCode = matcherCode.group(1);
+                targetLanguage = languageCode.toLowerCase();
+                log.info("圖片文字中指定翻譯成: {} ({})", languageCode, LanguageUtils.toChineseName(targetLanguage));
+            }
+            
+            // 如果沒有在文字中指定目標語言，則使用默認的目標語言選擇邏輯
+            if (targetLanguage == null) {
                 targetLanguage = getDefaultTargetLanguage(sourceLanguage, userProfile);
             }
 
@@ -218,9 +237,15 @@ public class ImageTranslationService {
                 log.info("使用系統預設的中文翻譯目標語言: {}", targetLanguage);
             }
         } else {
-            // 如果不是中文，使用系統預設的目標語言
-            targetLanguage = appConfig.getDefaultTargetLanguageForOthers();
-            log.info("源語言不是中文，使用系統預設的目標語言: {}", targetLanguage);
+            // 如果不是中文，先檢查用戶是否設置了偏好的語言
+            String preferredLanguage = userProfile.getPreferredLanguage();
+            if (preferredLanguage != null && !preferredLanguage.isEmpty()) {
+                targetLanguage = preferredLanguage;
+                log.info("使用用戶偏好的目標語言: {}", targetLanguage);
+            } else {
+                targetLanguage = appConfig.getDefaultTargetLanguageForOthers();
+                log.info("使用系統預設的目標語言: {}", targetLanguage);
+            }
         }
         
         return targetLanguage;

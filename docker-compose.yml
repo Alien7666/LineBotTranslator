@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  app:
+    image: alien7666/linebot-translator:latest
+    container_name: linebot-translator
+    restart: always
+    network_mode: "host"  # 使用宿主機網路
+    env_file:
+      - .env
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - SERVER_PORT=4040
+      # 解決 gRPC 原生庫問題
+      - GRPC_NETTY_SHADED_NETTY_TCNATIVE_DO_NOT_USE_CONSCRYPT=true
+      - GRPC_NETTY_SHADED_NETTY_TCNATIVE_DO_NOT_USE_NATIVE=true
+    volumes:
+      - ./logs:/app/logs
+      - ./linebot.json:/app/linebot.json:ro

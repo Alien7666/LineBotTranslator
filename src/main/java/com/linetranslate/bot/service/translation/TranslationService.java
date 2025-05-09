@@ -41,6 +41,12 @@ public class TranslationService {
 
     // 翻譯指令的正則表達式模式（語言代碼）
     private static final Pattern TRANSLATION_COMMAND_PATTERN_CODE = Pattern.compile("翻譯成([a-zA-Z\\-]+)\\s*(.*)");
+    
+    // 處理「文本 翻譯成XX文」格式的模式（中文語言名稱）
+    private static final Pattern TEXT_THEN_TRANSLATION_PATTERN_CN = Pattern.compile("(.+?)\\s+翻譯成([\\u4e00-\\u9fa5]+)\\s*(.*)");
+    
+    // 處理「文本 翻譯成XX」格式的模式（語言代碼）
+    private static final Pattern TEXT_THEN_TRANSLATION_PATTERN_CODE = Pattern.compile("(.+?)\\s+翻譯成([a-zA-Z\\-]+)\\s*(.*)");
 
     // 多行翻譯指令的正則表達式模式（處理 "xxx\n翻譯成yyy" 的情況）
     private static final Pattern MULTILINE_TRANSLATION_PATTERN_CN = Pattern.compile("(.*?)\\n翻譯成([\\u4e00-\\u9fa5]+)\\s*(.*)");
@@ -116,35 +122,71 @@ public class TranslationService {
 
             log.info("多行格式翻譯，用戶指定翻譯成: {} ({}), 原文: {}", languageCode, LanguageUtils.toChineseName(targetLanguage), sourceText);
         }
-        // 檢查是否是單行翻譯指令格式 (例如：翻譯成日文 你好)
-        else if (text.startsWith("翻譯成")) {
-            Matcher matcherCN = TRANSLATION_COMMAND_PATTERN_CN.matcher(text);
-            Matcher matcherCode = TRANSLATION_COMMAND_PATTERN_CODE.matcher(text);
-
-            if (matcherCN.find()) {
+        // 處理「文本 翻譯成XX文」格式
+        else if (text.contains("翻譯成")) {
+            Matcher textThenTranslationMatcherCN = TEXT_THEN_TRANSLATION_PATTERN_CN.matcher(text);
+            Matcher textThenTranslationMatcherCode = TEXT_THEN_TRANSLATION_PATTERN_CODE.matcher(text);
+            
+            if (textThenTranslationMatcherCN.find()) {
                 // 使用用戶指定的中文語言名稱
-                String languageName = matcherCN.group(1);
+                sourceText = textThenTranslationMatcherCN.group(1).trim();
+                String languageName = textThenTranslationMatcherCN.group(2);
                 targetLanguage = LanguageUtils.toLanguageCode(languageName);
-                sourceText = matcherCN.group(2).trim();
-
-                if (sourceText.isEmpty()) {
-                    return "請在「翻譯成" + languageName + "」後面輸入要翻譯的文字。";
+                String additionalText = textThenTranslationMatcherCN.group(3).trim();
+                
+                // 如果有額外文本，添加到源文本
+                if (!additionalText.isEmpty()) {
+                    sourceText += " " + additionalText;
                 }
-
-                log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageName, targetLanguage, sourceText);
-            } else if (matcherCode.find()) {
+                
+                log.info("文本後翻譯格式，用戶指定翻譯成: {} ({}), 原文: {}", languageName, targetLanguage, sourceText);
+            } else if (textThenTranslationMatcherCode.find()) {
                 // 使用用戶指定的語言代碼
-                String languageCode = matcherCode.group(1);
+                sourceText = textThenTranslationMatcherCode.group(1).trim();
+                String languageCode = textThenTranslationMatcherCode.group(2);
                 targetLanguage = languageCode.toLowerCase();
-                sourceText = matcherCode.group(2).trim();
-
-                if (sourceText.isEmpty()) {
-                    return "請在「翻譯成" + languageCode + "」後面輸入要翻譯的文字。";
+                String additionalText = textThenTranslationMatcherCode.group(3).trim();
+                
+                // 如果有額外文本，添加到源文本
+                if (!additionalText.isEmpty()) {
+                    sourceText += " " + additionalText;
                 }
+                
+                log.info("文本後翻譯格式，用戶指定翻譯成: {} ({}), 原文: {}", languageCode, LanguageUtils.toChineseName(targetLanguage), sourceText);
+            }
+            // 檢查是否是單行翻譯指令格式 (例如：翻譯成日文 你好)
+            else if (text.startsWith("翻譯成")) {
+                Matcher matcherCN = TRANSLATION_COMMAND_PATTERN_CN.matcher(text);
+                Matcher matcherCode = TRANSLATION_COMMAND_PATTERN_CODE.matcher(text);
 
-                log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageCode, LanguageUtils.toChineseName(targetLanguage), sourceText);
+                if (matcherCN.find()) {
+                    // 使用用戶指定的中文語言名稱
+                    String languageName = matcherCN.group(1);
+                    targetLanguage = LanguageUtils.toLanguageCode(languageName);
+                    sourceText = matcherCN.group(2).trim();
+
+                    if (sourceText.isEmpty()) {
+                        return "請在「翻譯成" + languageName + "」後面輸入要翻譯的文字。";
+                    }
+
+                    log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageName, targetLanguage, sourceText);
+                } else if (matcherCode.find()) {
+                    // 使用用戶指定的語言代碼
+                    String languageCode = matcherCode.group(1);
+                    targetLanguage = languageCode.toLowerCase();
+                    sourceText = matcherCode.group(2).trim();
+
+                    if (sourceText.isEmpty()) {
+                        return "請在「翻譯成" + languageCode + "」後面輸入要翻譯的文字。";
+                    }
+
+                    log.info("用戶指定翻譯成: {} ({}), 原文: {}", languageCode, LanguageUtils.toChineseName(targetLanguage), sourceText);
+                } else {
+                    // 如果格式不正確，使用默認翻譯處理
+                    return handleDefaultTranslation(userId, text, userProfile, start);
+                }
             } else {
-                // 如果格式不正確，使用默認翻譯處理
+                // 如果包含「翻譯成」但格式不符合任何模式，使用默認翻譯處理
                 return handleDefaultTranslation(userId, text, userProfile, start);
             }
         } else {
