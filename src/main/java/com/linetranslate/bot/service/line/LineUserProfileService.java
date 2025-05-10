@@ -103,6 +103,47 @@ public class LineUserProfileService {
     }
     
     /**
+     * 設置用戶的顯示名稱
+     * 
+     * @param userId 用戶 ID
+     * @param displayName 新的顯示名稱
+     * @return 操作結果訊息
+     */
+    public String setUserDisplayName(String userId, String displayName) {
+        if (displayName == null || displayName.trim().isEmpty()) {
+            return "❌ 顯示名稱不能為空";
+        }
+        
+        // 檢查用戶是否存在
+        Optional<UserProfile> userProfileOptional = userProfileRepository.findByUserId(userId);
+        
+        if (userProfileOptional.isPresent()) {
+            UserProfile userProfile = userProfileOptional.get();
+            String oldDisplayName = userProfile.getDisplayName();
+            userProfile.setDisplayName(displayName.trim());
+            userProfileRepository.save(userProfile);
+            
+            log.info("已將用戶 {} 的顯示名稱從 '{}' 更改為 '{}'", userId, oldDisplayName, displayName.trim());
+            return "✅ 已將用戶 " + userId + " 的顯示名稱設置為: " + displayName.trim();
+        } else {
+            // 如果用戶不存在，嘗試先創建用戶資料
+            try {
+                UserProfile newProfile = UserProfile.builder()
+                        .userId(userId)
+                        .displayName(displayName.trim())
+                        .build();
+                userProfileRepository.save(newProfile);
+                
+                log.info("已為用戶 {} 創建資料並設置顯示名稱為 '{}'", userId, displayName.trim());
+                return "✅ 已為用戶 " + userId + " 創建資料並設置顯示名稱為: " + displayName.trim();
+            } catch (Exception e) {
+                log.error("設置用戶 {} 的顯示名稱失敗: {}", userId, e.getMessage());
+                return "❌ 設置顯示名稱失敗: " + e.getMessage();
+            }
+        }
+    }
+    
+    /**
      * 獲取用戶資料信息
      */
     public String getUserProfileInfo(String userId) {

@@ -50,6 +50,14 @@ public class AdminController {
         String param = parts.length > 1 ? parts[1] : "";
         
         switch (subCommand) {
+            case "help":
+                // 處理 /adminhelp 命令，直接返回管理員幫助信息
+                return new TextMessage(getAdminHelpMessage());
+                
+            case "isadmin":
+                // 處理 /isadmin 命令，確認用戶是否為管理員
+                return new TextMessage("您是管理員。");
+                
             case "broadcast":
                 if (param.isEmpty()) {
                     return new TextMessage("請指定要廣播的消息。例如：/admin broadcast 您好，這是一條廣播消息。");
@@ -69,17 +77,131 @@ public class AdminController {
                 }
                 return handleUserCommand(userId, param);
                 
+            case "nickname":
+                // 處理設置用戶暱稱的命令
+                return handleNicknameCommand(userId, param);
+                
             case "config":
-                // 將在未來實現
-                return new TextMessage("⚙️ 系統配置信息功能尚未實現\n\n此功能將顯示系統的各項配置設定。");
+                // 處理系統配置命令
+                if (param.isEmpty()) {
+                    // 如果沒有參數，顯示系統配置信息和可用的子命令
+                    StringBuilder helpBuilder = new StringBuilder();
+                    helpBuilder.append(adminService.getSystemConfig()).append("\n");
+                    helpBuilder.append("【配置命令說明】\n");
+                    helpBuilder.append("• /admin config c2lang [lang] - 設置中文翻譯默認目標語言\n");
+                    helpBuilder.append("• /admin config lang [lang] - 設置其他語言翻譯默認目標語言\n");
+                    helpBuilder.append("• /admin config ai [provider] - 設置默認 AI 提供者 (openai 或 gemini)\n");
+                    helpBuilder.append("• /admin config openai [model] - 設置 OpenAI 默認模型\n");
+                    helpBuilder.append("• /admin config gemini [model] - 設置 Gemini 默認模型\n");
+                    helpBuilder.append("• /admin config ocr [on/off] - 啟用或禁用 OCR 功能\n");
+                    return new TextMessage(helpBuilder.toString());
+                }
+                
+                // 解析子命令和參數
+                String[] configParts = param.split(" ", 2);
+                String configSubCommand = configParts[0].toLowerCase();
+                String configParam = configParts.length > 1 ? configParts[1].trim() : "";
+                
+                // 處理各種子命令
+                switch (configSubCommand) {
+                    case "c2lang":
+                        if (configParam.isEmpty()) {
+                            return new TextMessage("請指定中文翻譯默認目標語言。例如：/admin config c2lang en");
+                        }
+                        return new TextMessage(adminService.setDefaultTargetLanguageForChinese(configParam));
+                        
+                    case "lang":
+                        if (configParam.isEmpty()) {
+                            return new TextMessage("請指定其他語言翻譯默認目標語言。例如：/admin config lang zh-TW");
+                        }
+                        return new TextMessage(adminService.setDefaultTargetLanguageForOthers(configParam));
+                        
+                    case "ai":
+                        if (configParam.isEmpty()) {
+                            return new TextMessage("請指定默認 AI 提供者。例如：/admin config ai openai");
+                        }
+                        return new TextMessage(adminService.setDefaultAiProvider(configParam));
+                        
+                    case "openai":
+                        if (configParam.isEmpty()) {
+                            return new TextMessage("請指定 OpenAI 默認模型。例如：/admin config openai gpt-4o");
+                        }
+                        return new TextMessage(adminService.setOpenAiDefaultModel(configParam));
+                        
+                    case "gemini":
+                        if (configParam.isEmpty()) {
+                            return new TextMessage("請指定 Gemini 默認模型。例如：/admin config gemini gemini-pro");
+                        }
+                        return new TextMessage(adminService.setGeminiDefaultModel(configParam));
+                        
+                    case "ocr":
+                        if (configParam.isEmpty()) {
+                            return new TextMessage("請指定 OCR 功能狀態。例如：/admin config ocr on 或 /admin config ocr off");
+                        }
+                        boolean enabled = configParam.equalsIgnoreCase("on") || configParam.equalsIgnoreCase("開") || configParam.equalsIgnoreCase("啟用");
+                        return new TextMessage(adminService.setOcrEnabled(enabled));
+                        
+                    default:
+                        return new TextMessage("未知的配置子命令：" + configSubCommand + "\n\n請使用 /admin config 查看可用的配置命令。");
+                }
                 
             case "usage":
-                // 將在未來實現
-                return new TextMessage("💰 API 使用量和費用功能尚未實現\n\n此功能將顯示 API 的使用量和相關費用。");
+                // 處理 API 使用量和費用命令
+                if (param.isEmpty()) {
+                    // 如果沒有參數，顯示當前月的使用量和費用
+                    return new TextMessage(adminService.getApiUsageStats());
+                }
+                
+                // 解析子命令和參數
+                String[] usageParts = param.split(" ", 2);
+                String usageSubCommand = usageParts[0].toLowerCase();
+                String usageParam = usageParts.length > 1 ? usageParts[1].trim() : "";
+                
+                // 處理各種子命令
+                switch (usageSubCommand) {
+                    case "month":
+                        // 指定月份的使用量和費用
+                        if (usageParam.isEmpty()) {
+                            return new TextMessage("請指定月份（格式：YYYY-MM）。例如：/admin usage month 2025-05");
+                        }
+                        return new TextMessage(adminService.getApiUsageStatsByMonth(usageParam));
+                        
+                    case "provider":
+                        // 按 AI 提供者顯示使用量和費用
+                        if (usageParam.isEmpty()) {
+                            return new TextMessage("請指定 AI 提供者 (openai 或 gemini)。例如：/admin usage provider openai");
+                        }
+                        return new TextMessage(adminService.getApiUsageStatsByProvider(usageParam));
+                        
+                    case "summary":
+                        // 顯示所有時間的使用量和費用摘要
+                        return new TextMessage(adminService.getApiUsageSummary());
+                        
+                    default:
+                        return new TextMessage("未知的使用量子命令：" + usageSubCommand + "\n\n可用的子命令：\n• /admin usage - 顯示當前月的使用量和費用\n• /admin usage month [YYYY-MM] - 顯示指定月份的使用量和費用\n• /admin usage provider [openai/gemini] - 按 AI 提供者顯示使用量和費用\n• /admin usage summary - 顯示所有時間的使用量和費用摘要");
+                }
                 
             case "today":
                 // 使用現有的 getTodayStats 方法
                 return new TextMessage(adminService.getTodayStats());
+                
+            case "add":
+                // 處理添加管理員命令
+                if (param.isEmpty()) {
+                    return new TextMessage("請指定要添加為管理員的用戶ID。例如：/admin add U123456789");
+                }
+                // 調用 AdminService 的 addAdmin 方法
+                String addResult = adminService.addAdmin(param.trim());
+                return new TextMessage(addResult);
+                
+            case "remove":
+                // 處理移除管理員命令
+                if (param.isEmpty()) {
+                    return new TextMessage("請指定要移除管理員權限的用戶ID。例如：/admin remove U123456789");
+                }
+                // 調用 AdminService 的 removeAdmin 方法
+                String removeResult = adminService.removeAdmin(param.trim());
+                return new TextMessage(removeResult);
                 
             default:
                 return new TextMessage("未知的管理員命令：" + subCommand + "\n\n" + getAdminHelpMessage());
@@ -165,18 +287,45 @@ public class AdminController {
     }
     
     /**
+     * 處理設置用戶暱稱的命令
+     * 
+     * @param adminId 管理員ID
+     * @param param 命令參數
+     * @return 回應消息
+     */
+    private Message handleNicknameCommand(String adminId, String param) {
+        if (param.isEmpty()) {
+            return new TextMessage("請提供用戶ID和新的暱稱。\n格式：/admin nickname [用戶ID] [新暱稱]\n例如：/admin nickname U123456789 張三");
+        }
+        
+        String[] parts = param.split(" ", 2);
+        if (parts.length < 2) {
+            return new TextMessage("請提供新的暱稱。\n格式：/admin nickname [用戶ID] [新暱稱]\n例如：/admin nickname U123456789 張三");
+        }
+        
+        String targetUserId = parts[0];
+        String newNickname = parts[1];
+        
+        // 調用 AdminService 的方法設置用戶暱稱
+        String result = adminService.setUserDisplayName(targetUserId, newNickname);
+        return new TextMessage(result);
+    }
+    
+    /**
      * 獲取管理員幫助信息
      */
     private String getAdminHelpMessage() {
-        return "🔐 LINE 翻譯機器人管理員命令 🔐\n\n" +
-                "【💻 管理員命令列表】\n" +
-                "📖 /adminhelp - 顯示管理員幫助信息\n" +
-                "📢 /admin broadcast [消息] - 向所有用戶廣播消息\n" +
-                "📊 /admin stats - 查看系統統計信息\n" +
-                "🔍 /admin users - 查看用戶列表\n" +
-                "🔎 /admin user [用戶ID] - 查看指定用戶詳細信息\n" +
-                "🔧 /admin config - 查看系統配置\n" +
-                "💰 /admin usage - 查看 API 使用量和費用\n" +
-                "📅 /admin today - 查看今日統計信息";
+        return "【管理員命令】\n" +
+                "➖ /admin help - 顯示此幫助信息\n" +
+                "➖ /admin isadmin - 確認您是否是管理員\n" +
+                "➖ /admin broadcast [訊息] - 向所有用戶廣播訊息\n" +
+                "➖ /admin stats - 查看系統統計信息\n" +
+                "➖ /admin users - 查看用戶列表\n" +
+                "➖ /admin user [用戶ID] - 查看特定用戶資料\n" +
+                "➖ /admin nickname [用戶ID] [新暱稱] - 設置用戶暱稱\n" +
+                "➖ /admin config - 查看和修改系統配置\n" +
+                "➖ /admin usage - 查看 API 使用量和費用\n" +
+                "➖ /admin add [用戶ID] - 添加管理員\n" +
+                "➖ /admin remove [用戶ID] - 移除管理員權限";
     }
 }

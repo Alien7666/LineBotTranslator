@@ -1,12 +1,8 @@
 package com.linetranslate.bot.controller;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
 import com.linecorp.bot.model.event.Event;
 import com.linecorp.bot.model.event.MessageEvent;
@@ -38,27 +34,27 @@ public class LineBotController {
     private final TranslationService translationService;
     private final LineUserProfileService lineUserProfileService;
     private final AdminService adminService;
+    private final AdminController adminController;
     private final ImageTranslationService imageTranslationService;
     private final OpenAiConfig openAiConfig;
     private final GeminiConfig geminiConfig;
-    private final UserProfileRepository userProfileRepository;
 
     @Autowired
     public LineBotController(
             TranslationService translationService,
             LineUserProfileService lineUserProfileService,
             AdminService adminService,
+            AdminController adminController,
             ImageTranslationService imageTranslationService,
             OpenAiConfig openAiConfig,
-            GeminiConfig geminiConfig,
-            UserProfileRepository userProfileRepository) {
+            GeminiConfig geminiConfig) {
         this.translationService = translationService;
         this.lineUserProfileService = lineUserProfileService;
         this.adminService = adminService;
+        this.adminController = adminController;
         this.imageTranslationService = imageTranslationService;
         this.openAiConfig = openAiConfig;
         this.geminiConfig = geminiConfig;
-        this.userProfileRepository = userProfileRepository;
     }
     
     /**
@@ -142,7 +138,7 @@ public class LineBotController {
                     return new TextMessage("請指定 AI 模型名稱。例如：/setmodel gpt-4o");
                 }
                 String modelName = parts[1].trim();
-                return handleSetModelCommand(userId, modelName);
+                return handleSetModelCommand(userId, modelName);                                                                                                                                                    
                 
             case "models":
                 return new TextMessage(getAvailableModelsMessage());
@@ -174,30 +170,30 @@ public class LineBotController {
 
             // 處理管理員命令
             case "adminhelp":
-                if (adminService.isAdmin(userId)) {
-                    return new TextMessage(getAdminHelpMessage());
-                } else {
+                // 確保只有管理員可以執行 /adminhelp 命令
+                if (!adminService.isAdmin(userId)) {
                     return new TextMessage("您沒有管理員權限。");
                 }
+                return adminController.handleCommand(userId, "help");
                 
             case "admin":
-                if (adminService.isAdmin(userId)) {
-                    // 如果有多個參數，將後面的參數合併為一個字符串
-                    String adminCommand = "";
-                    if (parts.length > 1) {
-                        adminCommand = parts[1];
-                    }
-                    return handleAdminCommand(userId, adminCommand);
-                } else {
+                // 確保只有管理員可以執行 /admin 命令
+                if (!adminService.isAdmin(userId)) {
                     return new TextMessage("您沒有管理員權限。");
                 }
+                // 如果有多個參數，將後面的參數合併為一個字符串
+                String adminCommand = "";
+                if (parts.length > 1) {
+                    adminCommand = parts[1];
+                }
+                return adminController.handleCommand(userId, adminCommand);
                 
             case "isadmin":
-                if (adminService.isAdmin(userId)) {
-                    return new TextMessage("您是管理員。");
-                } else {
-                    return new TextMessage("您不是管理員。");
+                // 將 /isadmin 命令也視為管理員命令，需要管理員權限
+                if (!adminService.isAdmin(userId)) {
+                    return new TextMessage("您沒有管理員權限。");
                 }
+                return adminController.handleCommand(userId, "isadmin");
 
             default:
                 return new TextMessage("未知命令。發送 /help 獲取可用命令列表。");
@@ -354,22 +350,7 @@ public class LineBotController {
                 "👤 /profile - 查看您的用戶資料";
     }
     
-    /**
-     * 獲取管理員幫助信息
-     */
-    private String getAdminHelpMessage() {
-        return "🔐 LINE 翻譯機器人管理員命令 🔐\n\n" +
-                "【💻 管理員命令列表】\n" +
-                "📖 /adminhelp - 顯示管理員幫助信息\n" +
-                "📢 /admin broadcast [消息] - 向所有用戶廣播消息\n" +
-                "📊 /admin stats - 查看系統統計信息\n" +
-                "🔍 /admin users - 查看用戶列表\n" +
-                "🔎 /admin user [用戶ID] - 查看指定用戶詳細信息\n" +
-                "🔧 /admin config - 查看系統配置\n" +
-                "💰 /admin usage - 查看 API 使用量和費用\n" +
-                "📅 /admin today - 查看今日統計信息\n" +
-                "🔐 /admin isadmin - 檢查您是否是管理員";
-    }
+
 
     /**
      * 獲取關於信息
@@ -387,143 +368,5 @@ public class LineBotController {
                 "• 📸 圖片文字識別與翻譯";
     }
     
-    /**
-     * 處理管理員命令
-     * 
-     * @param userId 用戶ID
-     * @param command 命令內容
-     * @return 回應消息
-     */
-    private Message handleAdminCommand(String userId, String command) {
-        log.info("處理管理員命令: 用戶={}, 命令={}", userId, command);
-        
-        if (command.isEmpty()) {
-            return new TextMessage(getAdminHelpMessage());
-        }
-        
-        String[] parts = command.split(" ", 2);
-        String subCommand = parts[0].toLowerCase();
-        String param = parts.length > 1 ? parts[1] : "";
-        
-        switch (subCommand) {
-            case "isadmin":
-                return new TextMessage("您是管理員。");
-                
-            case "broadcast":
-                if (param.isEmpty()) {
-                    return new TextMessage("請指定要廣播的消息。例如：/admin broadcast 您好，這是一條廣播消息。");
-                }
-                // 實現廣播功能
-                int successCount = adminService.broadcastMessage(param);
-                
-                // 獲取有效用戶列表及其暱稱
-                List<UserProfile> validUsers = userProfileRepository.findAll().stream()
-                        .filter(user -> user.getUserId() != null && !user.getUserId().isEmpty())
-                        .collect(Collectors.toList());
-                
-                StringBuilder broadcastBuilder = new StringBuilder();
-                broadcastBuilder.append("📢 廣播消息已發送\n\n");
-                broadcastBuilder.append("成功發送給 ").append(successCount).append(" 個用戶\n");
-                broadcastBuilder.append("用戶列表：\n");
-                
-                for (int i = 0; i < Math.min(validUsers.size(), 10); i++) { // 最多顯示10個用戶
-                    UserProfile user = validUsers.get(i);
-                    String displayName = user.getDisplayName() != null ? user.getDisplayName() : "無暱稱";
-                    broadcastBuilder.append(i + 1).append(". ").append(displayName);
-                    // 顯示用戶ID的後六位數字，以保護隱私
-                    String userIdPart = user.getUserId();
-                    if (userIdPart != null && userIdPart.length() > 6) {
-                        broadcastBuilder.append(" (ID: ...").append(userIdPart.substring(userIdPart.length() - 6)).append(")\n");
-                    } else {
-                        broadcastBuilder.append(" (ID: ").append(userIdPart).append(")\n");
-                    }
-                }
-                
-                if (validUsers.size() > 10) {
-                    broadcastBuilder.append("... 及其他 ").append(validUsers.size() - 10).append(" 個用戶\n");
-                }
-                
-                broadcastBuilder.append("\n消息內容：\n").append(param);
-                
-                return new TextMessage(broadcastBuilder.toString());
-                
-            case "user":
-                if (param.isEmpty()) {
-                    return new TextMessage("請指定要查詢的用戶ID。例如：/admin user U123456789");
-                }
-                // 實現用戶詳細信息功能
-                Map<String, Object> userInfo = adminService.getUserInfo(param);
-                if (userInfo == null) {
-                    return new TextMessage("找不到用戶: " + param);
-                }
-                
-                StringBuilder userInfoBuilder = new StringBuilder();
-                userInfoBuilder.append("👤 用戶詳細信息\n\n");
-                userInfoBuilder.append("用戶ID: ").append(userInfo.get("userId")).append("\n");
-                userInfoBuilder.append("顯示名稱: ").append(userInfo.get("displayName")).append("\n");
-                userInfoBuilder.append("註冊時間: ").append(userInfo.get("registrationTime")).append("\n");
-                userInfoBuilder.append("最後活躍: ").append(userInfo.get("lastActiveTime")).append("\n\n");
-                
-                userInfoBuilder.append("📊 統計信息\n");
-                userInfoBuilder.append("總翻譯次數: ").append(userInfo.get("translationCount")).append("\n");
-                userInfoBuilder.append("文字翻譯: ").append(userInfo.get("textTranslationCount")).append("\n");
-                userInfoBuilder.append("圖片翻譯: ").append(userInfo.get("imageTranslationCount")).append("\n\n");
-                
-                userInfoBuilder.append("⚙️ 用戶設置\n");
-                userInfoBuilder.append("偏好語言: ").append(userInfo.get("preferredLanguage")).append("\n");
-                userInfoBuilder.append("中文翻譯目標語言: ").append(userInfo.get("preferredChineseTargetLanguage")).append("\n");
-                userInfoBuilder.append("偏好 AI 提供者: ").append(userInfo.get("preferredAiProvider")).append("\n");
-                userInfoBuilder.append("OpenAI 偏好模型: ").append(userInfo.get("openaiPreferredModel")).append("\n");
-                userInfoBuilder.append("Gemini 偏好模型: ").append(userInfo.get("geminiPreferredModel")).append("\n");
-                
-                return new TextMessage(userInfoBuilder.toString());
-                
-            case "config":
-                // 實現系統配置信息功能
-                StringBuilder configBuilder = new StringBuilder();
-                configBuilder.append("⚙️ 系統配置信息\n\n");
-                
-                configBuilder.append("OpenAI 配置:\n");
-                configBuilder.append("• 默認模型: ").append(openAiConfig.getModelName()).append("\n");
-                configBuilder.append("• 可用模型: ").append(String.join(", ", openAiConfig.getAvailableModels())).append("\n\n");
-                
-                configBuilder.append("Gemini 配置:\n");
-                configBuilder.append("• 默認模型: ").append(geminiConfig.getModelName()).append("\n");
-                configBuilder.append("• 可用模型: ").append(String.join(", ", geminiConfig.getAvailableModels())).append("\n\n");
-                
-                configBuilder.append("OCR 功能: ").append(imageTranslationService.isOcrEnabled() ? "已啟用" : "已禁用").append("\n");
-                configBuilder.append("默認 AI 提供者: ").append(translationService.getDefaultProvider()).append("\n");
-                // 顯示管理員用戶及其暱稱
-                configBuilder.append("管理員用戶: ");
-                List<String> adminUserIds = adminService.getAdminUsers();
-                if (adminUserIds != null && !adminUserIds.isEmpty()) {
-                    List<String> adminUsersWithNames = new ArrayList<>();
-                    for (String adminId : adminUserIds) {
-                        Optional<UserProfile> userOpt = userProfileRepository.findByUserId(adminId);
-                        if (userOpt.isPresent() && userOpt.get().getDisplayName() != null) {
-                            adminUsersWithNames.add(adminId + " (" + userOpt.get().getDisplayName() + ")");
-                        } else {
-                            adminUsersWithNames.add(adminId);
-                        }
-                    }
-                    configBuilder.append(String.join(", ", adminUsersWithNames));
-                } else {
-                    configBuilder.append("無");
-                }
-                configBuilder.append("\n");
-                
-                return new TextMessage(configBuilder.toString());
-                
-            case "usage":
-                // 實現 API 使用量和費用功能
-                return new TextMessage("💰 API 使用量和費用功能尚未實現\n\n此功能將顯示 API 的使用量和相關費用。");
-                
-            case "today":
-                // 使用現有的 getTodayStats 方法
-                return new TextMessage(adminService.getTodayStats());
-                
-            default:
-                return new TextMessage("未知的管理員命令：" + subCommand + "\n\n" + getAdminHelpMessage());
-        }
-    }
+
 }
